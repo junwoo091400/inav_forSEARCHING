@@ -43,8 +43,9 @@ extern uint8_t __config_end;
 #include "common/color.h"
 #include "common/maths.h"
 #include "common/printf.h"
-#include "common/typeconversion.h"
 #include "common/string_light.h"
+#include "common/time.h"
+#include "common/typeconversion.h"
 
 #include "config/config_eeprom.h"
 #include "config/feature.h"
@@ -200,7 +201,7 @@ static void cliPrint(const char *str)
     }
 }
 
-static void cliPrintLinefeed()
+static void cliPrintLinefeed(void)
 {
     cliPrint("\r\n");
 }
@@ -2320,7 +2321,13 @@ static void cliStatus(char *cmdline)
 {
     UNUSED(cmdline);
 
-    cliPrintLinef("System Uptime: %d seconds", millis() / 1000, vbat);
+    char buf[FORMATTED_DATE_TIME_BUFSIZE];
+    dateTime_t dt;
+
+    cliPrintLinef("System Uptime: %d seconds", millis() / 1000);
+    rtcGetDateTime(&dt);
+    dateTimeFormatLocal(buf, &dt);
+    cliPrintLinef("Current Time: %s", buf);
     cliPrintLinef("Voltage: %d * 0.1V (%dS battery - %s)", vbat, batteryCellCount, getBatteryStateString());
     cliPrintf("CPU Clock=%dMHz", (SystemCoreClock / 1000000));
 
@@ -2340,6 +2347,21 @@ static void cliStatus(char *cmdline)
         }
     }
     cliPrintLinefeed();
+
+    cliPrintLine("STM32 system clocks:");
+#if defined(USE_HAL_DRIVER)
+    cliPrintLinef("  SYSCLK = %d MHz", HAL_RCC_GetSysClockFreq() / 1000000);
+    cliPrintLinef("  HCLK   = %d MHz", HAL_RCC_GetHCLKFreq() / 1000000);
+    cliPrintLinef("  PCLK1  = %d MHz", HAL_RCC_GetPCLK1Freq() / 1000000);
+    cliPrintLinef("  PCLK2  = %d MHz", HAL_RCC_GetPCLK2Freq() / 1000000);
+#else
+    RCC_ClocksTypeDef clocks;
+    RCC_GetClocksFreq(&clocks);
+    cliPrintLinef("  SYSCLK = %d MHz", clocks.SYSCLK_Frequency / 1000000);
+    cliPrintLinef("  HCLK   = %d MHz", clocks.HCLK_Frequency / 1000000);
+    cliPrintLinef("  PCLK1  = %d MHz", clocks.PCLK1_Frequency / 1000000);
+    cliPrintLinef("  PCLK2  = %d MHz", clocks.PCLK2_Frequency / 1000000);
+#endif
 
     cliPrintLinef("Sensor status: GYRO=%s, ACC=%s, MAG=%s, BARO=%s, RANGEFINDER=%s, GPS=%s",
         hardwareSensorStatusNames[getHwGyroStatus()],

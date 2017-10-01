@@ -32,6 +32,7 @@
 #include "common/maths.h"
 #include "common/streambuf.h"
 #include "common/bitarray.h"
+#include "common/time.h"
 #include "common/utils.h"
 
 #include "drivers/accgyro/accgyro.h"
@@ -259,10 +260,22 @@ static const box_t *findBoxByPermenantId(uint8_t permenantId)
     return NULL;
 }
 
-static void serializeBoxNamesReply(sbuf_t *dst)
+static bool serializeBoxNamesReply(sbuf_t *dst)
 {
-    // in first run of the loop, we grab total size of junk to be sent
-    // then come back and actually send it
+    // First run of the loop - calculate total length of the reply
+    int replyLengthTotal = 0;
+    for (int i = 0; i < activeBoxIdCount; i++) {
+        const box_t *box = findBoxByActiveBoxId(activeBoxIds[i]);
+        if (box) {
+            replyLengthTotal += strlen(box->boxName);
+        }
+    }
+
+    // Check if we have enough space to send a reply
+    if (sbufBytesRemaining(dst) < replyLengthTotal) {
+        return false;
+    }
+
     for (int i = 0; i < activeBoxIdCount; i++) {
         const int activeBoxId = activeBoxIds[i];
         const box_t *box = findBoxByActiveBoxId(activeBoxId);
@@ -271,6 +284,8 @@ static void serializeBoxNamesReply(sbuf_t *dst)
             sbufWriteData(dst, box->boxName, len);
         }
     }
+
+    return true;
 }
 
 static void initActiveBoxIds(void)
@@ -416,7 +431,7 @@ static void packBoxModeFlags(boxBitmask_t * mspBoxModeFlags)
     memset(mspBoxModeFlags, 0, sizeof(boxBitmask_t));
     for (uint32_t i = 0; i < activeBoxIdCount; i++) {
         if (activeBoxes[activeBoxIds[i]]) {
-            bitArraySet(mspBoxModeFlags, i);
+            bitArraySet(mspBoxModeFlags->bits, i);
         }
     }
 }
@@ -531,7 +546,7 @@ static void serializeDataflashReadReply(sbuf_t *dst, uint32_t address, uint16_t 
  * Returns true if the command was processd, false otherwise.
  * May set mspPostProcessFunc to a function to be called once the command has been processed
  */
-static bool mspFcProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst, mspPostProcessFnPtr *mspPostProcessFn)
+static bool mspFcProcessOutCommand(uint16_t cmdMSP, sbuf_t *dst, mspPostProcessFnPtr *mspPostProcessFn)
 {
     switch (cmdMSP) {
     case MSP_API_VERSION:
@@ -786,7 +801,9 @@ static bool mspFcProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst, mspPostProcessFn
         break;
 
     case MSP_BOXNAMES:
-        serializeBoxNamesReply(dst);
+        if (!serializeBoxNamesReply(dst)) {
+            return false;
+        }
         break;
 
     case MSP_BOXIDS:
@@ -1318,6 +1335,24 @@ static bool mspFcProcessOutCommand(uint8_t cmdMSP, sbuf_t *dst, mspPostProcessFn
 #endif
         break;
 
+    case MSP_RTC:
+        {
+            int32_t seconds = 0;
+            uint16_t millis = 0;
+            rtcTime_t t;
+            if (rtcGet(&t)) {
+                seconds = rtcTimeGetSeconds(&t);
+                millis = rtcTimeGetMillis(&t);
+            }
+            sbufWriteU32(dst, (uint32_t)seconds);
+            sbufWriteU16(dst, millis);
+        }
+        break;
+
+    case MSP2_COMMON_TZ:
+        sbufWriteU16(dst, (uint16_t)timeConfig()->tz_offset);
+        break;
+
     default:
         return false;
     }
@@ -1364,7 +1399,7 @@ static void mspFcDataFlashReadCommand(sbuf_t *dst, sbuf_t *src)
 }
 #endif
 
-static mspResult_e mspFcProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
+static mspResult_e mspFcProcessInCommand(uint16_t cmdMSP, sbuf_t *src)
 {
     uint32_t i;
     uint16_t tmp;
@@ -1375,20 +1410,23 @@ static mspResult_e mspFcProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
     switch (cmdMSP) {
 #ifdef HIL
     case MSP_SET_HIL_STATE:
-        hilToFC.rollAngle = sbufReadU16(src);
-        hilToFC.pitchAngle = sbufReadU16(src);
-        hilToFC.yawAngle = sbufReadU16(src);
-        hilToFC.baroAlt = sbufReadU32(src);
-        hilToFC.bodyAccel[0] = sbufReadU16(src);
-        hilToFC.bodyAccel[1] = sbufReadU16(src);
-        hilToFC.bodyAccel[2] = sbufReadU16(src);
-        hilActive = true;
+        sbufReadU16Safe(&hilToFC.rollAngle, src);
+        sbufReadU16Safe(&hilToFC.pitchAngle, src);
+        sbufReadU16Safe(&hilToFC.yawAngle, src);
+        sbufReadU32Safe(&hilToFC.baroAlt, src);
+        sbufReadU16Safe(&hilToFC.bodyAccel[0], src);
+        sbufReadU16Safe(&hilToFC.bodyAccel[1], src);
+        if (sbufReadU16Safe(&hilToFC.bodyAccel[2], src) {
+            hilActive = true;
+        }
         break;
 #endif
     case MSP_SELECT_SETTING:
         if (!ARMING_FLAG(ARMED)) {
-            const uint8_t profileIndex = sbufReadU8(src);
-            setConfigProfileAndWriteEEPROM(profileIndex);
+            uint8_t profileIndex;
+            if (sbufReadU8Safe(&profileIndex, src)) {
+                setConfigProfileAndWriteEEPROM(profileIndex);
+            }
         }
         break;
 
@@ -1856,6 +1894,11 @@ static mspResult_e mspFcProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
                     osdConfigMutable()->item_pos[addr] = pos;
                 }
             }
+            // Either a element position change or a units change needs
+            // a full redraw, since an element can change size significantly
+            // and the old position or the now unused space due to the
+            // size change need to be erased.
+            osdStartFullRedraw();
         }
         break;
     case MSP_OSD_CHAR_WRITE:
@@ -1960,52 +2003,37 @@ static mspResult_e mspFcProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
 #endif
 
     case MSP_SET_RX_CONFIG:
-        rxConfigMutable()->serialrx_provider = sbufReadU8(src);
-        rxConfigMutable()->maxcheck = sbufReadU16(src);
-        rxConfigMutable()->midrc = sbufReadU16(src);
-        rxConfigMutable()->mincheck = sbufReadU16(src);
-        rxConfigMutable()->spektrum_sat_bind = sbufReadU8(src);
-        if (dataSize > 8) {
-            rxConfigMutable()->rx_min_usec = sbufReadU16(src);
-            rxConfigMutable()->rx_max_usec = sbufReadU16(src);
-        }
-        if (dataSize > 12) {
-            // for compatibility with betaflight
-            sbufReadU8(src);
-            sbufReadU8(src);
-            sbufReadU16(src);
-        }
-        if (dataSize > 16) {
-            rxConfigMutable()->rx_spi_protocol = sbufReadU8(src);
-        }
-        if (dataSize > 17) {
-            rxConfigMutable()->rx_spi_id = sbufReadU32(src);
-        }
-        if (dataSize > 21) {
-            rxConfigMutable()->rx_spi_rf_channel_count = sbufReadU8(src);
-        }
+        sbufReadU8Safe(&rxConfigMutable()->serialrx_provider, src);
+        sbufReadU16Safe(&rxConfigMutable()->maxcheck, src);
+        sbufReadU16Safe(&rxConfigMutable()->midrc, src);
+        sbufReadU16Safe(&rxConfigMutable()->mincheck, src);
+        sbufReadU8Safe(&rxConfigMutable()->spektrum_sat_bind, src);
+        sbufReadU16Safe(&rxConfigMutable()->rx_min_usec, src);
+        sbufReadU16Safe(&rxConfigMutable()->rx_max_usec, src);
+        sbufReadU8Safe(NULL, src); // for compatibility with betaflight
+        sbufReadU8Safe(NULL, src); // for compatibility with betaflight
+        sbufReadU16Safe(NULL, src); // for compatibility with betaflight
+        sbufReadU8Safe(&rxConfigMutable()->rx_spi_protocol, src);
+        sbufReadU32Safe(&rxConfigMutable()->rx_spi_id, src);
+        sbufReadU8Safe(&rxConfigMutable()->rx_spi_rf_channel_count, src);
         break;
 
     case MSP_SET_FAILSAFE_CONFIG:
-        failsafeConfigMutable()->failsafe_delay = sbufReadU8(src);
-        failsafeConfigMutable()->failsafe_off_delay = sbufReadU8(src);
-        failsafeConfigMutable()->failsafe_throttle = sbufReadU16(src);
-        sbufReadU8(src);    // was failsafe_kill_switch
-        failsafeConfigMutable()->failsafe_throttle_low_delay = sbufReadU16(src);
-        failsafeConfigMutable()->failsafe_procedure = sbufReadU8(src);
-        if (dataSize > 8) {
-            failsafeConfigMutable()->failsafe_recovery_delay = sbufReadU8(src);
-        }
-        if (dataSize > 9) {
-            failsafeConfigMutable()->failsafe_fw_roll_angle = sbufReadU16(src);
-            failsafeConfigMutable()->failsafe_fw_pitch_angle = sbufReadU16(src);
-            failsafeConfigMutable()->failsafe_fw_yaw_rate = sbufReadU16(src);
-            failsafeConfigMutable()->failsafe_stick_motion_threshold = sbufReadU16(src);
-        }
+        sbufReadU8Safe(&failsafeConfigMutable()->failsafe_delay, src);
+        sbufReadU8Safe(&failsafeConfigMutable()->failsafe_off_delay, src);
+        sbufReadU16Safe(&failsafeConfigMutable()->failsafe_throttle, src);
+        sbufReadU8Safe(NULL, src); // was failsafe_kill_switch
+        sbufReadU16Safe(&failsafeConfigMutable()->failsafe_throttle_low_delay, src);
+        sbufReadU8Safe(&failsafeConfigMutable()->failsafe_procedure, src);
+        sbufReadU8Safe(&failsafeConfigMutable()->failsafe_recovery_delay, src);
+        sbufReadI16Safe(&failsafeConfigMutable()->failsafe_fw_roll_angle, src);
+        sbufReadI16Safe(&failsafeConfigMutable()->failsafe_fw_pitch_angle, src);
+        sbufReadI16Safe(&failsafeConfigMutable()->failsafe_fw_yaw_rate, src);
+        sbufReadU16Safe(&failsafeConfigMutable()->failsafe_stick_motion_threshold, src);
         break;
 
     case MSP_SET_RSSI_CONFIG:
-        rxConfigMutable()->rssi_channel = sbufReadU8(src);
+        sbufReadU8Safe(&rxConfigMutable()->rssi_channel, src);
         break;
 
     case MSP_SET_RX_MAP:
@@ -2113,6 +2141,22 @@ static mspResult_e mspFcProcessInCommand(uint8_t cmdMSP, sbuf_t *src)
         break;
 #endif
 
+    case MSP_SET_RTC:
+        {
+            // Use seconds and milliseconds to make senders
+            // easier to implement. Generating a 64 bit value
+            // might not be trivial in some platforms.
+            int32_t secs = (int32_t)sbufReadU32(src);
+            uint16_t millis = sbufReadU16(src);
+            rtcTime_t t = rtcTimeMake(secs, millis);
+            rtcSet(&t);
+        }
+        break;
+
+    case MSP2_COMMON_SET_TZ:
+        timeConfigMutable()->tz_offset = (int16_t)sbufReadU16(src);
+        break;
+
     default:
         return MSP_RESULT_ERROR;
     }
@@ -2127,7 +2171,7 @@ mspResult_e mspFcProcessCommand(mspPacket_t *cmd, mspPacket_t *reply, mspPostPro
     int ret = MSP_RESULT_ACK;
     sbuf_t *dst = &reply->buf;
     sbuf_t *src = &cmd->buf;
-    const uint8_t cmdMSP = cmd->cmd;
+    const uint16_t cmdMSP = cmd->cmd;
     // initialize reply by default
     reply->cmd = cmd->cmd;
 
