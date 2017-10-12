@@ -248,6 +248,7 @@ void navigationInit(void);
 
 /* Position estimator update functions */
 void updatePositionEstimator_BaroTopic(timeUs_t currentTimeUs);
+void updatePositionEstimator_OpticalFlowTopic(timeUs_t currentTimeUs);
 void updatePositionEstimator_SurfaceTopic(timeUs_t currentTimeUs, float newSurfaceAlt);
 
 /* Navigation system updates */
@@ -299,6 +300,10 @@ void activateForcedRTH(void);
 void abortForcedRTH(void);
 rthState_e getStateOfForcedRTH(void);
 
+/* Getter functions which return data about the state of the navigation system */
+bool navigationIsControllingThrottle(void);
+bool navigationIsFlyingAutonomousMode(void);
+
 /* Compatibility data */
 extern navSystemStatus_t    NAV_Status;
 
@@ -320,5 +325,6 @@ extern int16_t navAccNEU[3];
 #define navigationGetHeadingControlState() (0)
 #define navigationRequiresThrottleTiltCompensation() (0)
 #define getEstimatedActualVelocity(axis) (0)
+#define navigationIsControllingThrottle() (0)
 
 #endif

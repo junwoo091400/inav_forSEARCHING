@@ -59,6 +59,8 @@ typedef enum {
     OSD_MESSAGES,
     OSD_GPS_HDOP,
     OSD_MAIN_BATT_CELL_VOLTAGE,
+    OSD_THROTTLE_POS_AUTO_THR,
+    OSD_HEADING_GRAPH,
     OSD_ITEM_COUNT // MUST BE LAST
 } osd_items_e;
 
@@ -67,6 +69,18 @@ typedef enum {
     OSD_UNIT_METRIC,
     OSD_UNIT_UK, // Show speed in mp/h, other values in metric
 } osd_unit_e;
+
+typedef enum {
+    OSD_CROSSHAIRS_STYLE_DEFAULT,
+    OSD_CROSSHAIRS_STYLE_AIRCRAFT,
+} osd_crosshairs_style_e;
+
+typedef enum {
+    OSD_SIDEBAR_SCROLL_NONE,
+    OSD_SIDEBAR_SCROLL_ALTITUDE,
+    OSD_SIDEBAR_SCROLL_GROUND_SPEED,
+    OSD_SIDEBAR_SCROLL_HOME_DISTANCE,
+} osd_sidebar_scroll_e;
 
 typedef struct osdConfig_s {
     uint16_t item_pos[OSD_ITEM_COUNT];
@@ -79,6 +93,13 @@ typedef struct osdConfig_s {
 
     uint8_t video_system;
     uint8_t row_shiftdown;
+
+    // Preferences
+    uint8_t ahi_reverse_roll;
+    osd_crosshairs_style_e crosshairs_style;
+    osd_sidebar_scroll_e left_sidebar_scroll;
+    osd_sidebar_scroll_e right_sidebar_scroll;
+    uint8_t sidebar_scroll_arrows;
 
     osd_unit_e units;
 } osdConfig_t;
