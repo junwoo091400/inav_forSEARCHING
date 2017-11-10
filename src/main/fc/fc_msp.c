@@ -54,6 +54,7 @@
 #include "fc/rc_controls.h"
 #include "fc/rc_modes.h"
 #include "fc/runtime_config.h"
+#include "fc/settings.h"
 
 #include "flight/failsafe.h"
 #include "flight/imu.h"
@@ -818,6 +819,8 @@ static bool mspFcProcessOutCommand(uint16_t cmdMSP, sbuf_t *dst, mspPostProcessF
         sbufWriteU16(dst, osdConfig()->cap_alarm);
         sbufWriteU16(dst, osdConfig()->time_alarm);
         sbufWriteU16(dst, osdConfig()->alt_alarm);
+        sbufWriteU16(dst, osdConfig()->dist_alarm);
+        sbufWriteU16(dst, osdConfig()->neg_alt_alarm);
         for (int i = 0; i < OSD_ITEM_COUNT; i++) {
             sbufWriteU16(dst, osdConfig()->item_pos[i]);
         }
@@ -1659,6 +1662,9 @@ static mspResult_e mspFcProcessInCommand(uint16_t cmdMSP, sbuf_t *src)
                 osdConfigMutable()->cap_alarm = sbufReadU16(src);
                 osdConfigMutable()->time_alarm = sbufReadU16(src);
                 osdConfigMutable()->alt_alarm = sbufReadU16(src);
+                // Won't be read if they weren't provided
+                sbufReadU16Safe(&osdConfigMutable()->dist_alarm, src);
+                sbufReadU16Safe(&osdConfigMutable()->neg_alt_alarm, src);
             } else {
                 // set a position setting
                 const uint16_t pos  = sbufReadU16(src);
@@ -1971,6 +1977,130 @@ static mspResult_e mspFcProcessInCommand(uint16_t cmdMSP, sbuf_t *src)
     return MSP_RESULT_ACK;
 }
 
+static const setting_t *mspReadSettingName(sbuf_t *src)
+{
+    char name[SETTING_MAX_NAME_LENGTH];
+    uint8_t c;
+    size_t s = 0;
+    while (1) {
+        if (!sbufReadU8Safe(&c, src)) {
+            return NULL;
+        }
+        name[s++] = c;
+        if (c == '\0') {
+            break;
+        }
+        if (s == SETTING_MAX_NAME_LENGTH) {
+            // Name is too long
+            return NULL;
+        }
+    }
+    return setting_find(name);
+}
+
+static bool mspSettingCommand(sbuf_t *dst, sbuf_t *src)
+{
+    const setting_t *setting = mspReadSettingName(src);
+    if (!setting) {
+        return false;
+    }
+
+    const void *ptr = setting_get_value_pointer(setting);
+    size_t size = setting_get_value_size(setting);
+    sbufWriteDataSafe(dst, ptr, size);
+    return true;
+}
+
+static bool mspSetSettingCommand(sbuf_t *dst, sbuf_t *src)
+{
+    UNUSED(dst);
+
+    const setting_t *setting = mspReadSettingName(src);
+    if (!setting) {
+        return false;
+    }
+
+    setting_min_t min = setting_get_min(setting);
+    setting_max_t max = setting_get_max(setting);
+
+    void *ptr = setting_get_value_pointer(setting);
+    switch (SETTING_TYPE(setting)) {
+        case VAR_UINT8:
+            {
+                uint8_t val;
+                if (!sbufReadU8Safe(&val, src)) {
+                    return false;
+                }
+                if (val > max) {
+                    return false;
+                }
+                *((uint8_t*)ptr) = val;
+            }
+            break;
+        case VAR_INT8:
+            {
+                int8_t val;
+                if (!sbufReadI8Safe(&val, src)) {
+                    return false;
+                }
+                if (val < min || val > (int8_t)max) {
+                    return false;
+                }
+                *((int8_t*)ptr) = val;
+            }
+            break;
+        case VAR_UINT16:
+            {
+                uint16_t val;
+                if (!sbufReadU16Safe(&val, src)) {
+                    return false;
+                }
+                if (val > max) {
+                    return false;
+                }
+                *((uint16_t*)ptr) = val;
+            }
+            break;
+        case VAR_INT16:
+            {
+                int16_t val;
+                if (!sbufReadI16Safe(&val, src)) {
+                    return false;
+                }
+                if (val < min || val > (int16_t)max) {
+                    return false;
+                }
+                *((int16_t*)ptr) = val;
+            }
+            break;
+        case VAR_UINT32:
+            {
+                uint32_t val;
+                if (!sbufReadU32Safe(&val, src)) {
+                    return false;
+                }
+                if (val > max) {
+                    return false;
+                }
+                *((uint32_t*)ptr) = val;
+            }
+            break;
+        case VAR_FLOAT:
+            {
+                float val;
+                if (!sbufReadDataSafe(src, &val, sizeof(float))) {
+                    return false;
+                }
+                if (val < (float)min || val > (float)max) {
+                    return false;
+                }
+                *((float*)ptr) = val;
+            }
+            break;
+    }
+
+    return true;
+}
 /*
  * Returns MSP_RESULT_ACK, MSP_RESULT_ERROR or MSP_RESULT_NO_REPLY
  */
@@ -2000,6 +2130,10 @@ mspResult_e mspFcProcessCommand(mspPacket_t *cmd, mspPacket_t *reply, mspPostPro
         mspFcDataFlashReadCommand(dst, src);
         ret = MSP_RESULT_ACK;
 #endif
+    } else if (cmdMSP == MSP2_COMMON_SETTING) {
+        ret = mspSettingCommand(dst, src) ? MSP_RESULT_ACK : MSP_RESULT_ERROR;
+    } else if (cmdMSP == MSP2_COMMON_SET_SETTING) {
+        ret = mspSetSettingCommand(dst, src) ? MSP_RESULT_ACK : MSP_RESULT_ERROR;
     } else {
         ret = mspFcProcessInCommand(cmdMSP, src);
     }

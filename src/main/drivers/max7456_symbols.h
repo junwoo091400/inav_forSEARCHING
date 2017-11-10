@@ -166,7 +166,7 @@
 #define SYM_DIST_M      181
 #define SYM_DIST_KM     182
 #define SYM_M           185
-#define SYM_KM          187
+#define SYM_KM          186
 
 // Unit Icon´s (Imperial)
 #define SYM_FTS         0x99
@@ -183,6 +183,10 @@
 #define SYM_AMP   0x9A
 #define SYM_MAH   0x07
 #define SYM_WATT  0x57
+
+// Efficiency
+#define SYM_MAH_KM_0    157
+#define SYM_MAH_KM_1    158
 
 // Note, these change with scrolling enabled (scrolling is TODO)
 //#define SYM_AH_DECORATION_LEFT 0x13

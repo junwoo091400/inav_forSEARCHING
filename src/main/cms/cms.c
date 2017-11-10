@@ -64,6 +64,7 @@
 
 // For VISIBLE*
 #include "io/osd.h"
+#include "io/rcdevice_cam.h"
 
 #include "rx/rx.h"
 
@@ -434,9 +435,9 @@ static int cmsDrawMenuEntry(displayPort_t *pDisplay, OSD_Entry *p, uint8_t row)
                 switch (SETTING_MODE(var)) {
                     case MODE_DIRECT:
                         if (SETTING_TYPE(var) == VAR_UINT32) {
-                            tfp_sprintf(buff, "%u", value);
+                            tfp_sprintf(buff, "%u", (unsigned)value);
                         } else {
-                            tfp_sprintf(buff, "%d", value);
+                            tfp_sprintf(buff, "%d", (int)value);
                         }
                         break;
                     case MODE_LOOKUP:
@@ -1039,6 +1040,12 @@ uint16_t cmsHandleKeyWithRepeat(displayPort_t *pDisplay, uint8_t key, int repeat
 
 void cmsUpdate(uint32_t currentTimeUs)
 {
+#ifdef USE_RCDEVICE
+    if(rcdeviceInMenu) {
+        return ;
+    }
+#endif
+
     static int16_t rcDelayMs = BUTTON_TIME;
     static int holdCount = 1;
     static int repeatCount = 1;
