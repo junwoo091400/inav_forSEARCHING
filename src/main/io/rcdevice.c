@@ -338,7 +338,7 @@ bool runcamDeviceInit(runcamDevice_t *device)
     serialPortFunction_e portID = FUNCTION_RCDEVICE;
     serialPortConfig_t *portConfig = findSerialPortConfig(portID);
     if (portConfig != NULL) {
-        device->serialPort = openSerialPort(portConfig->identifier, portID, NULL, 115200, MODE_RXTX, SERIAL_NOT_INVERTED);
+        device->serialPort = openSerialPort(portConfig->identifier, portID, NULL, NULL, 115200, MODE_RXTX, SERIAL_NOT_INVERTED);
 
         if (device->serialPort != NULL) {
             // send RCDEVICE_PROTOCOL_COMMAND_GET_DEVICE_INFO to device to retrive
@@ -417,6 +417,8 @@ bool runcamDeviceSimulate5KeyOSDCableButtonRelease(runcamDevice_t *device)
 
 static bool runcamDeviceDecodeSettingDetail(sbuf_t *buf, runcamDeviceSettingDetail_t *outSettingDetail)
 {
+    char * saveptr;
+
     if (outSettingDetail == NULL || sbufBytesRemaining(buf) == 0) {
         return false;
     }
@@ -454,7 +456,7 @@ static bool runcamDeviceDecodeSettingDetail(sbuf_t *buf, runcamDeviceSettingDeta
         memset(textSels, 0, maxLen);
         strncpy(textSels, tmp, maxLen);
         char delims[] = ";";
-        char *result = strtok(textSels, delims);
+        char *result = strtok_r(textSels, delims, &saveptr);
         int i = 0;
         runcamDeviceSettingTextSelection_t *iterator = outSettingDetail->textSelections;
         while (result != NULL) {
@@ -465,7 +467,7 @@ static bool runcamDeviceDecodeSettingDetail(sbuf_t *buf, runcamDeviceSettingDeta
             memset(iterator->text, 0, RCDEVICE_PROTOCOL_MAX_SETTING_VALUE_LENGTH);
             strncpy(iterator->text, result, RCDEVICE_PROTOCOL_MAX_SETTING_VALUE_LENGTH);
             iterator++;
-            result = strtok(NULL, delims);
+            result = strtok_r(NULL, delims, &saveptr);
             i++;
         }
     } 
